@@ -60,34 +60,50 @@ jobs:
       - name: Run Tests
         run: ./mvnw test
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build  # Ensures deployment only occurs after the build stage
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+deploy:
+  runs-on: ubuntu-latest
+  needs: build  # Ensures deployment only occurs after the build stage
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'adopt'
-          cache: maven
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'adopt'
+        cache: maven
 
-      - name: Download Build Artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: build-artifacts
-      
-      - name: List downloaded artifacts
-        run: ls -al target/
+    - name: Download Build Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: build-artifacts
 
-      - name: Deploy to Server
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          echo "$SSH_PRIVATE_KEY" > id_rsa
-          chmod 600 id_rsa
-          scp -i id_rsa -o StrictHostKeyChecking=no target/spring-petclinic-3.3.0-SNAPSHOT.jar.original root@103.151.111.182:/var/www/html/
-          ssh -i id_rsa -o StrictHostKeyChecking=no root@103.151.111.182 'bash -s' < deploy-script.sh
+    - name: List files in target directory
+      run: |
+        ls -la target
 
+    - name: Deploy to Server
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      run: |
+        # Create id_rsa file with SSH key
+        echo "$SSH_PRIVATE_KEY" | tr -d '\r' > id_rsa
+        chmod 600 id_rsa
+        
+        # Test the SSH key by trying to connect (optional)
+        ssh -i id_rsa -o StrictHostKeyChecking=no root@103.151.111.182 'echo SSH key works'
+
+        # Deploy the JAR file (update path if necessary)
+        scp -i id_rsa -o StrictHostKeyChecking=no target/spring-petclinic-3.3.0-SNAPSHOT.jar.original root@103.151.111.182:/var/www/html/
+        
+        # Run the deployment script on the server
+        ssh -i id_rsa -o StrictHostKeyChecking=no root@103.151.111.182 << 'EOF'
+          # Kill any running instance of the application (if necessary)
+          pkill -f 'java -jar /var/www/html/spring-petclinic-3.3.0-SNAPSHOT.jar.original' || true
+          
+          # Start the application on port 8080
+          nohup java -jar /var/www/html/spring-petclinic-3.3.0-SNAPSHOT.jar.original --server.port=8080 > /dev/null 2>&1 &
+          
+          echo "Application deployed and running on port 8080"
+        EOF
