@@ -1,109 +1,108 @@
-name: Java CI/CD Pipeline
+name: CI/CD Pipelines
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
+  setup:
+    runs-on: self-hosted
+    steps:
+      - name: Check for Git
+        run: |
+          if ! command -v git &> /dev/null; then
+              echo "Git not found, installing..."
+              sudo apt-get update
+              sudo apt-get install -y git
+          else
+              echo "Git is already installed."
+          fi
+      
+      - name: Check for Maven
+        run: |
+          if ! command -v mvn &> /dev/null; then
+              echo "Maven not found, installing..."
+              sudo apt-get update
+              sudo apt-get install -y maven
+          else
+              echo "Maven is already installed."
+          fi
+      - name: Validate Installation
+        run: |
+          echo "Validating installation..."
+          command -v git
+          command -v mvn
+
   build:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        java: [ '17' ]
-    
+    runs-on: self-hosted
+    needs: setup
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ matrix.java }}
-          distribution: 'adopt'
-          cache: maven
-      
-      - name: Build with Maven Wrapper
-        run: ./mvnw -B package
+        uses: actions/checkout@v3
 
-      - name: List target directory
-        run: ls -al target/
-      
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: build-artifacts
-          path: target/spring-petclinic-3.3.0-SNAPSHOT.jar.original
+      - name: Build with Maven
+        run: ./mvnw -B package
 
   test:
-    runs-on: ubuntu-latest
-    needs: build  # Ensures tests run after the build stage
-    strategy:
-      matrix:
-        java: [ '17' ]
-
+    runs-on: self-hosted
+    needs: build
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Set up JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ matrix.java }}
-          distribution: 'adopt'
-          cache: maven
-
-      - name: Build with Maven Wrapper
-        run: ./mvnw -B package
-
-      - name: Run Tests
+      - name: Run tests
         run: ./mvnw test
 
-deploy:
-  runs-on: ubuntu-latest
-  needs: build  # Ensures deployment only occurs after the build stage
-  steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+  deploy:
+    runs-on: self-hosted
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'adopt'
-        cache: maven
+      - name: Verify JAR file
+        run: |
+          echo "Verifying JAR file presence..."
+          ls -al /home/cicduser/spring-petclinic/target/
+          if [ -z "$(find /home/cicduser/spring-petclinic/target/ -name 'spring-petclinic-3.3.0-SNAPSHOT.jar')" ]; then
+            echo "JAR file not found in target directory!"
+            exit 1
+          fi
 
-    - name: Download Build Artifacts
-      uses: actions/download-artifact@v3
-      with:
-        name: build-artifacts
+      - name: Setup SSH
+        run: |
+          echo "Setting up SSH..."
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H $DEPLOY_SERVER >> ~/.ssh/known_hosts || true
 
-    - name: List files in target directory
-      run: |
-        ls -la target
+      - name: Deploy application
+        env:
+          DEPLOY_SERVER: '103.151.111.182'
+          DEPLOY_PORT: '8080'
+          DEPLOY_USER: 'cicduser'
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          echo "Deploying application to $DEPLOY_SERVER"
+          scp -i ~/.ssh/id_ed25519 /home/cicduser/spring-petclinic/target/spring-petclinic-3.3.0-SNAPSHOT.jar $DEPLOY_USER@$DEPLOY_SERVER:/home/bilal/spring-petclinic/
+          ssh -i ~/.ssh/id_ed25519 $DEPLOY_USER@$DEPLOY_SERVER "nohup java -jar /home/cicduser/spring-petclinic/spring-petclinic-3.3.0-SNAPSHOT.jar > /dev/null 2>&1 &"
+          rm -f ~/.ssh/id_ed25519
 
-    - name: Deploy to Server
-      env:
-        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      run: |
-        # Create id_rsa file with SSH key
-        echo "$SSH_PRIVATE_KEY" | tr -d '\r' > id_rsa
-        chmod 600 id_rsa
-        
-        # Test the SSH key by trying to connect (optional)
-        ssh -i id_rsa -o StrictHostKeyChecking=no root@103.151.111.182 'echo SSH key works'
-
-        # Deploy the JAR file (update path if necessary)
-        scp -i id_rsa -o StrictHostKeyChecking=no target/spring-petclinic-3.3.0-SNAPSHOT.jar.original root@103.151.111.182:/var/www/html/
-        
-        # Run the deployment script on the server
-        ssh -i id_rsa -o StrictHostKeyChecking=no root@103.151.111.182 << 'EOF'
-          # Kill any running instance of the application (if necessary)
-          pkill -f 'java -jar /var/www/html/spring-petclinic-3.3.0-SNAPSHOT.jar.original' || true
-          
-          # Start the application on port 8080
-          nohup java -jar /var/www/html/spring-petclinic-3.3.0-SNAPSHOT.jar.original --server.port=8080 > /dev/null 2>&1 &
-          
-          echo "Application deployed and running on port 8080"
-        EOF
+      - name: Wait for application to start
+        run: |
+          echo "Waiting for application to start..."
+          for i in {1..30}; do
+            if curl -s http://$DEPLOY_SERVER:$DEPLOY_PORT > /dev/null; then
+              echo "Application is up!"
+              break
+            else
+              echo "Application is not up yet, retrying in 10 seconds..."
+              sleep 10
+            fi
+          done
