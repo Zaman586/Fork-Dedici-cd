@@ -90,7 +90,7 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           echo "Deploying application to $DEPLOY_SERVER"
-          scp -i ~/.ssh/id_ed25519 /home/cicduser/spring-petclinic/target/spring-petclinic-3.3.0-SNAPSHOT.jar $DEPLOY_USER@$DEPLOY_SERVER:/home/bilal/spring-petclinic/
+          scp -i ~/.ssh/id_ed25519 /home/cicduser/spring-petclinic/target/spring-petclinic-3.3.0-SNAPSHOT.jar $DEPLOY_USER@$DEPLOY_SERVER:/home/cicduser/spring-petclinic/
           ssh -i ~/.ssh/id_ed25519 $DEPLOY_USER@$DEPLOY_SERVER "nohup java -jar /home/cicduser/spring-petclinic/spring-petclinic-3.3.0-SNAPSHOT.jar > /dev/null 2>&1 &"
           rm -f ~/.ssh/id_ed25519
 
