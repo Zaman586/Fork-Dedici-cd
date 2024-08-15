@@ -27,11 +27,14 @@ jobs:
       - name: Build with Maven Wrapper
         run: ./mvnw -B package
 
+      - name: List target directory
+        run: ls -al target/
+      
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v3
         with:
           name: build-artifacts
-          path: target/*.jar
+          path: target/spring-petclinic-3.3.0-SNAPSHOT.jar.original
 
   test:
     runs-on: ubuntu-latest
@@ -75,6 +78,9 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: build-artifacts
+      
+      - name: List downloaded artifacts
+        run: ls -al target/
 
       - name: Deploy to Server
         env:
@@ -82,5 +88,6 @@ jobs:
         run: |
           echo "$SSH_PRIVATE_KEY" > id_rsa
           chmod 600 id_rsa
-          scp -i id_rsa -o StrictHostKeyChecking=no target/*.jar root@103.151.111.182:/var/www/html/
+          scp -i id_rsa -o StrictHostKeyChecking=no target/spring-petclinic-3.3.0-SNAPSHOT.jar.original root@103.151.111.182:/var/www/html/
           ssh -i id_rsa -o StrictHostKeyChecking=no root@103.151.111.182 'bash -s' < deploy-script.sh
+
